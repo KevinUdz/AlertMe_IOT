@@ -1,0 +1,136 @@
+#include <Wire.h>
+#include "esp_camera.h"
+#include "FS.h"
+#include "SD_MMC.h"
+
+// Pines del sensor ultrasónico
+const int echoPin = 27;
+const int trigPin = 26;
+const int ledPin = 32;
+
+// Configuración de la cámara (modelo AI Thinker)
+#define PWDN_GPIO_NUM     32
+#define RESET_GPIO_NUM    -1
+#define XCLK_GPIO_NUM      0
+#define SIOD_GPIO_NUM     26
+#define SIOC_GPIO_NUM     27
+
+#define Y9_GPIO_NUM       35
+#define Y8_GPIO_NUM       34
+#define Y7_GPIO_NUM       39
+#define Y6_GPIO_NUM       36
+#define Y5_GPIO_NUM       21
+#define Y4_GPIO_NUM       19
+#define Y3_GPIO_NUM       18
+#define Y2_GPIO_NUM        5
+#define VSYNC_GPIO_NUM    25
+#define HREF_GPIO_NUM     23
+#define PCLK_GPIO_NUM     22
+
+void setup() {
+  Serial.begin(115200);
+
+  // Inicializar pines ultrasónicos y LED
+  pinMode(echoPin, INPUT);
+  pinMode(trigPin, OUTPUT);
+  pinMode(ledPin, OUTPUT);
+
+  // ==== Inicializar cámara ====
+  camera_config_t config;
+  config.ledc_channel = LEDC_CHANNEL_0;
+  config.ledc_timer = LEDC_TIMER_0;
+  config.pin_d0 = Y2_GPIO_NUM;
+  config.pin_d1 = Y3_GPIO_NUM;
+  config.pin_d2 = Y4_GPIO_NUM;
+  config.pin_d3 = Y5_GPIO_NUM;
+  config.pin_d4 = Y6_GPIO_NUM;
+  config.pin_d5 = Y7_GPIO_NUM;
+  config.pin_d6 = Y8_GPIO_NUM;
+  config.pin_d7 = Y9_GPIO_NUM;
+  config.pin_xclk = XCLK_GPIO_NUM;
+  config.pin_pclk = PCLK_GPIO_NUM;
+  config.pin_vsync = VSYNC_GPIO_NUM;
+  config.pin_href = HREF_GPIO_NUM;
+  config.pin_sscb_sda = SIOD_GPIO_NUM;
+  config.pin_sscb_scl = SIOC_GPIO_NUM;
+  config.pin_pwdn = PWDN_GPIO_NUM;
+  config.pin_reset = RESET_GPIO_NUM;
+  config.xclk_freq_hz = 20000000;
+  config.pixel_format = PIXFORMAT_JPEG;
+  config.frame_size = FRAMESIZE_QVGA; // 320x240
+  config.jpeg_quality = 12;
+  config.fb_count = 1;
+
+  // Inicializar cámara
+  esp_err_t err = esp_camera_init(&config);
+  if (err != ESP_OK) {
+    Serial.printf("Error iniciando cámara: 0x%x", err);
+    return;
+  }
+
+  Serial.println("Cámara iniciada correctamente");
+
+  // Inicializar SD
+  if (!SD_MMC.begin()) {
+    Serial.println("Error al montar la tarjeta SD");
+  } else {
+    Serial.println("SD montada correctamente");
+  }
+}
+
+void loop() {
+  float distancia = leerdistancia();
+  Serial.print("Distancia: ");
+  Serial.print(distancia);
+  Serial.println(" cm");
+
+  if (distancia > 0 && distancia <= 30) {
+    digitalWrite(ledPin, HIGH);
+    Serial.println("Movimiento detectado: tomando imágenes...");
+    capturarSecuencia(5, 200); // 5 imágenes con 200 ms entre ellas
+  } else {
+    digitalWrite(ledPin, LOW);
+  }
+
+  delay(500);
+}
+
+float leerdistancia() {
+  digitalWrite(trigPin, LOW);
+  delayMicroseconds(2);
+  digitalWrite(trigPin, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(trigPin, LOW);
+
+  long duracion = pulseIn(echoPin, HIGH, 30000);
+  if (duracion == 0) {
+    return -1;
+  }
+  float distancia = (duracion * 0.0343) / 2;
+  return distancia;
+}
+
+// Función para capturar una secuencia de imágenes
+void capturarSecuencia(int cantidad, int intervalo_ms) {
+  for (int i = 0; i < cantidad; i++) {
+    camera_fb_t *fb = esp_camera_fb_get();
+    if (!fb) {
+      Serial.println("Error al tomar foto");
+      continue;
+    }
+
+    // Guardar la foto en SD con nombre incremental
+    String path = "/foto_" + String(millis()) + ".jpg";
+    File file = SD_MMC.open(path, FILE_WRITE);
+    if (!file) {
+      Serial.println("Error al guardar imagen");
+    } else {
+      file.write(fb->buf, fb->len);
+      Serial.printf("Imagen guardada: %s\n", path.c_str());
+      file.close();
+    }
+
+    esp_camera_fb_return(fb);
+    delay(intervalo_ms); // pausa entre fotos
+  }
+}
